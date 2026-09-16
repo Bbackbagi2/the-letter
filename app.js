@@ -96,9 +96,27 @@ function placeIme([row, col]) {
 
 // --- 글꼴 ---
 
+/** 실제로 있는 글꼴 주소를 찾는다.
+ *
+ * 한글 파일 이름은 완성형(NFC)과 분해형(NFD)이라는 두 가지 표기가 있고, 서버는 한쪽만
+ * 인정한다. 목록(fonts.js)이 브라우저 캐시에 낡은 채로 남아 있으면 없는 쪽 이름으로
+ * 요청해 404가 난다. 그래서 두 표기를 모두 확인해 있는 쪽을 쓴다.
+ */
+async function findFontUrl(file) {
+  const names = [...new Set([file, file.normalize("NFC"), file.normalize("NFD")])];
+  for (const name of names) {
+    const url = `fonts/${encodeURIComponent(name)}`;
+    try {
+      const head = await fetch(url, { method: "HEAD" });
+      if (head.ok) return url;
+    } catch (e) { /* 다음 표기를 본다 */ }
+  }
+  return `fonts/${encodeURIComponent(file.normalize("NFC"))}`;
+}
+
 /** 글꼴 파일을 받아 등록한다. 기기마다 막히는 방식이 달라 세 가지를 차례로 해 본다. */
 async function loadFont(info, family) {
-  const url = `fonts/${encodeURIComponent(info.file)}`;
+  const url = await findFontUrl(info.file);
   const ways = [
     ["주소로 등록", async () => {
       const face = new FontFace(family, `url("${url}")`);

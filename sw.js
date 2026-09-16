@@ -1,12 +1,22 @@
 // 오프라인에서도 열리도록 앱 파일을 캐시에 둔다. 글꼴은 쓸 때 받아서 따로 캐시한다.
-const SHELL = "the-letter-shell-v2"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
+const SHELL = "the-letter-shell-v3"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
 const FONTS = "the-letter-fonts-v3"; // 글꼴 파일을 다시 만들면 숫자를 올린다
 const FONT_LIMIT = 3; // 글꼴은 최근 3개만 남긴다 (한 종이 2~3MB라 용량을 많이 먹는다)
 const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./editor.js",
                      "./paper.js", "./fonts.js", "./sample.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const cache = await caches.open(SHELL);
+    // cache: "reload"으로 받아야 브라우저가 10분간 들고 있는 낡은 파일을 피할 수 있다
+    await Promise.all(SHELL_FILES.map(async (file) => {
+      try {
+        const res = await fetch(file, { cache: "reload" });
+        if (res.ok) await cache.put(file, res);
+      } catch (e) { /* 지금 못 받으면 쓸 때 받는다 */ }
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener("activate", (e) => {
