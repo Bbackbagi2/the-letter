@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>원고지 편집기</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#B01E23">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="원고지">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --bar: #f2f2f2; --line: #d6d6d6; --ink: #222; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; background: #808080; color: var(--ink);
+    font: 14px/1.4 -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    overflow: hidden; -webkit-text-size-adjust: 100%;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center;
+    padding: 8px 12px; padding-top: max(8px, env(safe-area-inset-top));
+    background: var(--bar); border-bottom: 1px solid var(--line);
+  }
+  button, select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
+    border-radius: 7px; background: #fff; color: inherit; }
+  button:active { background: #e6e6e6; }
+  button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+  label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  input[type=range] { width: 120px; }
+  main { flex: 1; display: grid; place-items: center; padding: 10px; min-height: 0; }
+  /* 손가락은 화면 밀기·손가락 확대에 쓰고, 마우스로만 끌어서 선택한다 (app.js) */
+  #paper { max-width: 100%; max-height: 100%; background: #fff; box-shadow: 0 2px 12px #0004;
+    touch-action: manipulation; }
+  footer { padding: 6px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom));
+    background: var(--bar); border-top: 1px solid var(--line); min-height: 30px;
+    font-size: 13px; color: #444; }
+  /* 한글 조합 입력을 받는 곳. 보이지 않지만 커서 칸 위에 두어 후보 창이 옆에 뜨게 한다 */
+  #ime { position: fixed; opacity: 0; border: 0; padding: 0; resize: none; overflow: hidden;
+    background: transparent; color: transparent; caret-color: transparent; z-index: -1; }
+  #file { display: none; }
+  @media print {
+    @page { size: A4 portrait; margin: 0; }
+    html, body { height: auto; background: #fff; overflow: visible; }
+    header, footer, #ime { display: none !important; }
+    main { display: block; padding: 0; }
+    #paper { width: 210mm; height: 297mm; max-width: none; max-height: none; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <button id="open">불러오기</button>
+  <button id="save">저장</button>
+  <button id="print">인쇄 · PDF</button>
+  <button id="vertical" aria-pressed="false">세로쓰기</button>
+  <select id="font"></select>
+  <label>글자 크기 <input id="size" type="range" min="40" max="100" step="1"><span id="sizeValue">80%</span></label>
+</header>
+<main>
+  <svg id="paper" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297"></svg>
+</main>
+<footer id="status">준비</footer>
+<textarea id="ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+<input id="file" type="file" accept=".txt,text/plain">
+<script type="module" src="app.js"></script>
+</body>
+</html>
