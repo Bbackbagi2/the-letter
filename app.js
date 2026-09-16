@@ -11,6 +11,8 @@ const PREEDIT_INK = "#B4B4B4";
 const CARET_FILL = "rgba(80,140,255,0.24)";
 const SELECTION_FILL = "rgba(80,140,255,0.43)";
 const STORE_KEY = "the-letter";
+const FONT_CACHE = "the-letter-fonts-v3"; // sw.js의 FONTS와 같은 이름이어야 한다
+const FONT_LIMIT = 3; // sw.js의 FONT_LIMIT와 같은 값
 
 const $ = (id) => document.getElementById(id);
 const svg = $("paper");
@@ -27,6 +29,11 @@ const state = {
   selectMode: false, // 켜면 손가락으로 끌어서 글자를 선택한다 (폰)
 };
 const loadedFonts = new Set();
+const loadedFaces = []; // 이번에 켜 둔 동안 등록한 글꼴 (먼저 받은 것부터)
+// 글꼴 이름은 CSS·FontFace에 넘길 때 ASCII 별명을 쓴다. 한글·공백이 섞인 이름이
+// 기기마다 다르게 해석될 여지를 없앤다. 화면에 보이는 이름은 fonts.js의 label 그대로다.
+const FAMILIES = new Map(FONTS.map((f, i) => [f.label, `tl-font-${i}`]));
+const familyOf = (label) => FAMILIES.get(label) || label;
 let statusNote = "";
 
 // --- 그리기 ---
@@ -41,7 +48,7 @@ function render() {
   svg.setAttribute("viewBox", rotated ? `0 0 ${paper.PAGE_H} ${paper.PAGE_W}`
     : `0 0 ${paper.PAGE_W} ${paper.PAGE_H}`);
   const inner = paper.pageSVG(shown, {
-    family: state.font, ratio: state.ratio, vertical, ink: INK, preeditInk: PREEDIT_INK,
+    family: familyOf(state.font), ratio: state.ratio, vertical, ink: INK, preeditInk: PREEDIT_INK,
     positions, caret: doc.caret, selection: preedit ? null : doc.selection(),
     preeditRange: preedit ? [doc.caret, doc.caret + preedit.length] : null,
     caretFill: CARET_FILL, selectionFill: SELECTION_FILL,
@@ -89,32 +96,84 @@ function placeIme([row, col]) {
 
 // --- 글꼴 ---
 
-/** 글꼴 파일을 받아서 등록한다. 몇 MB라 폰에서는 오래 걸려 진행률을 보여 준다. */
-async function loadFont(info, label) {
-  const size = `${(info.kb / 1024).toFixed(1)}MB`;
-  note(`${label} 받는 중… (${size})`);
-  const response = await fetch(`fonts/${encodeURIComponent(info.file)}`);
-  if (!response.ok) throw new Error(`${response.status}`);
-  const total = Number(response.headers.get("content-length")) || info.kb * 1024;
-  const reader = response.body && response.body.getReader();
-  let data;
-  if (reader) {
-    const chunks = [];
-    let received = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      note(`${label} 받는 중… ${Math.min(99, Math.round((received / total) * 100))}% (${size})`);
+/** 글꼴 파일을 받아 등록한다. 기기마다 막히는 방식이 달라 세 가지를 차례로 해 본다. */
+async function loadFont(info, family) {
+  const url = `fonts/${encodeURIComponent(info.file)}`;
+  const ways = [
+    ["주소로 등록", async () => {
+      const face = new FontFace(family, `url("${url}")`);
+      await face.load();
+      document.fonts.add(face);
+      return face;
+    }],
+    ["파일로 등록", async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const face = new FontFace(family, await response.arrayBuffer());
+      await face.load();
+      document.fonts.add(face);
+      return face;
+    }],
+    ["CSS로 등록", async () => {
+      const style = document.createElement("style");
+      style.textContent =
+        `@font-face { font-family: "${family}"; src: url("${url}") format("woff2"); }`;
+      document.head.append(style);
+      await document.fonts.load(`100px "${family}"`, "가");
+      if (!document.fonts.check(`100px "${family}"`, "가")) throw new Error("적용되지 않음");
+    }],
+  ];
+  const problems = [];
+  for (const [how, run] of ways) {
+    try {
+      return await run(); // 등록한 FontFace (CSS로 등록한 경우에는 undefined)
+    } catch (e) {
+      problems.push(`${how} ${e.name || ""} ${e.message || e}`.trim());
     }
-    data = await new Blob(chunks).arrayBuffer();
-  } else {
-    data = await response.arrayBuffer();
   }
-  const face = new FontFace(label, data);
-  await face.load();
-  document.fonts.add(face);
+  throw new Error(problems.join(" / "));
+}
+
+/** 브라우저에 저장돼 있는 글꼴 파일 이름들 (먼저 받은 것부터). */
+async function cachedFontFiles() {
+  try {
+    const cache = await caches.open(FONT_CACHE);
+    const keys = await cache.keys();
+    return keys.map((r) => decodeURIComponent(r.url.split("/").pop()));
+  } catch (e) {
+    return []; // 캐시를 못 쓰는 기기에서는 빈 칸으로 둔다
+  }
+}
+
+/** 아이콘의 점을 저장된 글꼴 수만큼 채운다. tell이면 목록을 아래쪽에 알려 준다. */
+async function showFontCache(tell = false) {
+  const files = await cachedFontFiles();
+  const names = files.map((file) => {
+    const found = FONTS.find((f) => f.file === file);
+    return found ? found.label : file;
+  });
+  const button = $("fontCache");
+  button.querySelectorAll(".slot").forEach((slot, i) => {
+    slot.classList.toggle("on", i < names.length);
+  });
+  const text = names.length
+    ? `저장된 글꼴 ${names.length}/${FONT_LIMIT}: ${names.join(", ")}`
+    : `저장된 글꼴 없음 (최대 ${FONT_LIMIT}개)`;
+  button.title = text;
+  if (tell) note(text);
+}
+
+/** 화면에 안 쓰는 글꼴은 메모리에서도 놓아 준다. 저장된 글꼴과 같이 3개까지만 들고 있는다. */
+function trimLoadedFonts() {
+  while (loadedFaces.length > FONT_LIMIT) {
+    const oldest = loadedFaces.findIndex((f) => f.label !== state.font);
+    if (oldest < 0) break;
+    const [dropped] = loadedFaces.splice(oldest, 1);
+    try {
+      document.fonts.delete(dropped.face);
+    } catch (e) { /* 지울 수 없으면 그대로 둔다 */ }
+    loadedFonts.delete(dropped.label);
+  }
 }
 
 async function useFont(label) {
@@ -122,17 +181,21 @@ async function useFont(label) {
   const info = FONTS.find((f) => f.label === label);
   if (info && !loadedFonts.has(label)) {
     const before = statusNote; // 글꼴을 받고 나면 원래 안내 문구로 되돌린다
+    note(`${label} 받는 중… (${(info.kb / 1024).toFixed(1)}MB)`);
     try {
-      await loadFont(info, label);
+      const face = await loadFont(info, familyOf(label));
       loadedFonts.add(label);
+      if (face) loadedFaces.push({ label, face });
+      trimLoadedFonts();
       note(before);
     } catch (e) {
-      note(`${label}을 받지 못했습니다. 연결을 확인하고 다시 골라 주세요.`);
+      note(`${label}을 받지 못했습니다 — ${e.message}`);
     }
   }
   // 글꼴이 준비되기 전에 잰 글자 크기가 남아 있을 수 있으니 항상 지운다
   paper.clearFontCache();
   render();
+  showFontCache();
 }
 
 // --- 저장·불러오기 ---
@@ -507,6 +570,7 @@ $("vertical").addEventListener("click", (e) => {
   ime.focus({ preventScroll: true });
   render();
 });
+$("fontCache").addEventListener("click", () => showFontCache(true));
 $("keyboard").addEventListener("click", () => {
   ime.focus({ preventScroll: true });
   note("");
@@ -563,6 +627,7 @@ $("sizeValue").textContent = `${Math.round(state.ratio * 100)}%`;
 $("vertical").setAttribute("aria-pressed", String(state.vertical));
 render();
 useFont(state.font);
+showFontCache();
 // 글꼴이 늦게 준비되는 경우가 있어, 준비되면 크기를 다시 재서 그린다
 if (document.fonts && document.fonts.addEventListener) {
   document.fonts.addEventListener("loadingdone", () => {

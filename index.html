@@ -27,6 +27,10 @@
   button, select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
     border-radius: 7px; background: #fff; color: inherit; }
   .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+  /* 저장된 글꼴 칸 3개를 점으로 보여 주는 아이콘 */
+  #fontCache { display: flex; gap: 3px; align-items: center; padding: 8px; }
+  #fontCache .slot { width: 8px; height: 8px; border-radius: 2px; border: 1px solid #aaa; }
+  #fontCache .slot.on { background: var(--ink); border-color: var(--ink); }
   button:active { background: #e6e6e6; }
   button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
   label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
@@ -71,6 +75,9 @@
   <span class="sep"></span>
   <button id="vertical" aria-pressed="false">세로쓰기</button>
   <select id="font"></select>
+  <button id="fontCache" title="저장된 글꼴 (최대 3개)" aria-label="저장된 글꼴">
+    <span class="slot"></span><span class="slot"></span><span class="slot"></span>
+  </button>
   <label>글자 크기 <input id="size" type="range" min="40" max="100" step="1"><span id="sizeValue">80%</span></label>
 </header>
 <main>
