@@ -1,6 +1,6 @@
 // 오프라인에서도 열리도록 앱 파일을 캐시에 둔다. 글꼴은 쓸 때 받아서 따로 캐시한다.
 const SHELL = "the-letter-shell-v2"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
-const FONTS = "the-letter-fonts-v2"; // 글꼴 파일을 다시 만들면 숫자를 올린다
+const FONTS = "the-letter-fonts-v3"; // 글꼴 파일을 다시 만들면 숫자를 올린다
 const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./editor.js",
                      "./paper.js", "./fonts.js", "./sample.js", "./manifest.webmanifest"];
 

@@ -40,9 +40,12 @@
   footer { padding: 6px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom));
     background: var(--bar); border-top: 1px solid var(--line); min-height: 30px;
     font-size: 13px; color: #444; }
-  /* 한글 조합 입력을 받는 곳. 보이지 않지만 커서 칸 위에 두어 후보 창이 옆에 뜨게 한다 */
-  #ime { position: fixed; opacity: 0; border: 0; padding: 0; resize: none; overflow: hidden;
-    background: transparent; color: transparent; caret-color: transparent; z-index: -1; }
+  /* 한글 조합 입력을 받는 곳. 커서 칸 위에 두어 조합 후보 창이 그 옆에 뜨게 한다.
+     안드로이드 크롬은 화면 뒤에 숨은 입력칸에는 키보드를 띄우지 않는다. 그래서 화면 위에
+     두되 거의 투명하게 만들고, 손가락 입력은 원고지로 통과시킨다. */
+  #ime { position: fixed; opacity: 0.01; border: 0; padding: 0; margin: 0; resize: none;
+    overflow: hidden; background: transparent; color: transparent; caret-color: transparent;
+    z-index: 3; pointer-events: none; }
   #file { display: none; }
   @media print {
     @page { size: A4 portrait; margin: 0; }
@@ -59,6 +62,7 @@
   <button id="save">저장</button>
   <button id="print">인쇄 · PDF</button>
   <span class="sep"></span>
+  <button id="keyboard" title="키보드를 올립니다">키보드</button>
   <button id="selectMode" aria-pressed="false" title="손가락으로 끌어서 글자를 선택합니다">선택</button>
   <button id="selectAll" title="전체 선택 (⌘A)">전체</button>
   <button id="copy" title="선택한 글자 복사 (⌘C)">복사</button>
@@ -73,7 +77,8 @@
   <svg id="paper" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297"></svg>
 </main>
 <footer id="status">준비</footer>
-<textarea id="ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
+<textarea id="ime" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"
+  inputmode="text" enterkeyhint="enter"></textarea>
 <input id="file" type="file" accept=".txt,text/plain">
 <script type="module" src="app.js"></script>
 </body>

@@ -55,7 +55,8 @@ source .venv/bin/activate && python3 tools/build_fonts.py
 ```
 
 - 변환할 때 글리프 감김 방향을 정리한다 (반대로 감긴 획이 macOS에서 연하게 찍히는 문제).
-- 획을 가늘게 할 글꼴은 `tools/build_fonts.py`의 `THINNING` 표에 적는다 (단위: em 1000 기준).
+- 획을 가늘게 할 글꼴은 `tools/build_fonts.py`의 `THINNING` 표에 적는다 (획 한쪽에서 깎아 들어갈 깊이, em 1000 기준).
+- 온점·쉼표처럼 작은 글리프는 깎으면 점 자체가 작아지므로 건드리지 않는다 (`SMALL_GLYPH`).
 - 글꼴 파일을 다시 만들었으면 `sw.js`의 `FONTS` 캐시 이름 숫자를 올려야 폰에서 새로 받는다.
 
 ## 쓰는 법
@@ -81,7 +82,11 @@ source .venv/bin/activate && python3 tools/build_fonts.py
 | 길게 눌렀다 끌기 | 범위 선택 |
 | 그냥 끌기 · 두 손가락 | 화면 밀기 · 확대 |
 | 선택 버튼 | 켜 두면 길게 누르지 않아도 바로 끌어서 선택 (화면 밀기는 멈춤) |
+| 키보드 버튼 | 키보드가 안 올라올 때 누른다 |
 | 전체 · 복사 · 붙여넣기 · 지우기 | ⌘A · ⌘C · ⌘V · ⌘⌫ 대신 쓰는 버튼 |
+
+폰 키보드는 Backspace·엔터를 `keydown`으로 알려 주지 않는다(keyCode 229). 그래서
+`beforeinput`의 `inputType`으로 지우기·줄바꿈을 받는다 ([app.js](app.js)).
 
 붙여넣기는 브라우저가 클립보드 읽기를 물어본다. 막혀 있는 기기에서는 입력창이 떠서
 거기에 시스템 붙여넣기로 넣으면 된다.

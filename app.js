@@ -89,23 +89,49 @@ function placeIme([row, col]) {
 
 // --- 글꼴 ---
 
+/** 글꼴 파일을 받아서 등록한다. 몇 MB라 폰에서는 오래 걸려 진행률을 보여 준다. */
+async function loadFont(info, label) {
+  const size = `${(info.kb / 1024).toFixed(1)}MB`;
+  note(`${label} 받는 중… (${size})`);
+  const response = await fetch(`fonts/${encodeURIComponent(info.file)}`);
+  if (!response.ok) throw new Error(`${response.status}`);
+  const total = Number(response.headers.get("content-length")) || info.kb * 1024;
+  const reader = response.body && response.body.getReader();
+  let data;
+  if (reader) {
+    const chunks = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      note(`${label} 받는 중… ${Math.min(99, Math.round((received / total) * 100))}% (${size})`);
+    }
+    data = await new Blob(chunks).arrayBuffer();
+  } else {
+    data = await response.arrayBuffer();
+  }
+  const face = new FontFace(label, data);
+  await face.load();
+  document.fonts.add(face);
+}
+
 async function useFont(label) {
   state.font = label;
   const info = FONTS.find((f) => f.label === label);
   if (info && !loadedFonts.has(label)) {
     const before = statusNote; // 글꼴을 받고 나면 원래 안내 문구로 되돌린다
-    note(`글꼴 받는 중… ${label} (${(info.kb / 1024).toFixed(1)}MB)`);
     try {
-      const face = new FontFace(label, `url("fonts/${encodeURIComponent(info.file)}")`);
-      await face.load();
-      document.fonts.add(face);
+      await loadFont(info, label);
       loadedFonts.add(label);
       note(before);
     } catch (e) {
-      note(`글꼴을 받지 못했습니다 (${label}). 기본 글꼴로 보여 줍니다.`);
+      note(`${label}을 받지 못했습니다. 연결을 확인하고 다시 골라 주세요.`);
     }
-    paper.clearFontCache();
   }
+  // 글꼴이 준비되기 전에 잰 글자 크기가 남아 있을 수 있으니 항상 지운다
+  paper.clearFontCache();
   render();
 }
 
@@ -361,6 +387,9 @@ svg.addEventListener("pointercancel", (e) => {
   }
 });
 
+// 안드로이드 크롬은 click 때 focus해야 키보드를 올려 주는 경우가 있다
+svg.addEventListener("click", () => ime.focus({ preventScroll: true }));
+
 // --- 글자 입력 (조합 포함) ---
 
 ime.addEventListener("compositionupdate", (e) => {
@@ -380,6 +409,37 @@ ime.addEventListener("input", (e) => {
     ime.value = "";
     render();
   }
+});
+
+// 폰 키보드는 Backspace·엔터를 keydown으로 알려 주지 않는다 (keyCode 229).
+// 그래서 beforeinput의 inputType으로 받는다. 조합 중에는 compositionend가 처리한다.
+ime.addEventListener("beforeinput", (e) => {
+  if (e.isComposing) return;
+  const doc = state.doc;
+  const type = e.inputType;
+  if (type === "insertText" && e.data) {
+    doc.insert(e.data);
+  } else if (type === "insertLineBreak" || type === "insertParagraph") {
+    doc.insert("\n");
+  } else if (type === "deleteContentBackward") {
+    doc.backspace();
+  } else if (type === "deleteContentForward") {
+    doc.deleteForward();
+  } else if (type === "deleteWordBackward") {
+    const { text } = doc;
+    let i = doc.caret;
+    while (i > 0 && /\s/.test(text[i - 1])) i -= 1;
+    while (i > 0 && !/\s/.test(text[i - 1])) i -= 1;
+    doc.moveTo(i, true);
+    doc.deleteSelection("backspace");
+  } else if (type === "deleteSoftLineBackward" || type === "deleteHardLineBackward") {
+    doc.deleteToRowStart();
+  } else {
+    return; // 나머지는 input·composition 쪽에서 처리
+  }
+  e.preventDefault();
+  ime.value = "";
+  render();
 });
 
 const ARROWS = {
@@ -447,6 +507,10 @@ $("vertical").addEventListener("click", (e) => {
   ime.focus({ preventScroll: true });
   render();
 });
+$("keyboard").addEventListener("click", () => {
+  ime.focus({ preventScroll: true });
+  note("");
+});
 $("selectMode").addEventListener("click", (e) => {
   state.selectMode = !state.selectMode;
   e.currentTarget.setAttribute("aria-pressed", String(state.selectMode));
@@ -499,6 +563,13 @@ $("sizeValue").textContent = `${Math.round(state.ratio * 100)}%`;
 $("vertical").setAttribute("aria-pressed", String(state.vertical));
 render();
 useFont(state.font);
+// 글꼴이 늦게 준비되는 경우가 있어, 준비되면 크기를 다시 재서 그린다
+if (document.fonts && document.fonts.addEventListener) {
+  document.fonts.addEventListener("loadingdone", () => {
+    paper.clearFontCache();
+    render();
+  });
+}
 ime.focus({ preventScroll: true });
 
 if ("serviceWorker" in navigator) {
