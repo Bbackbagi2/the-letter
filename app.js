@@ -23,6 +23,7 @@ const state = {
   ratio: paper.TEXT_RATIO,
   font: DEFAULT_FONT,
   printing: false,
+  selectMode: false, // 켜면 손가락으로 끌어서 글자를 선택한다 (폰)
 };
 const loadedFonts = new Set();
 let statusNote = "";
@@ -153,6 +154,59 @@ function openFile(file) {
   reader.readAsText(file, "utf-8");
 }
 
+// --- 클립보드 (폰에는 ⌘C·⌘V가 없어 버튼으로 쓴다) ---
+
+/** 클립보드 API가 막힌 기기를 위한 대비책. 잠깐 만든 입력칸으로 복사한다. */
+function copyByTextarea(text) {
+  const box = document.createElement("textarea");
+  box.value = text;
+  box.readOnly = true;
+  box.style.cssText = "position:fixed;top:0;left:0;opacity:0";
+  document.body.append(box);
+  box.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch (e) {
+    copied = false;
+  }
+  box.remove();
+  return copied;
+}
+
+async function copySelection() {
+  const selected = state.doc.selectedText();
+  if (!selected) {
+    note("먼저 글자를 선택하세요 (길게 눌렀다 끌기, 또는 전체 버튼)");
+    return;
+  }
+  try {
+    if (!navigator.clipboard) throw new Error("클립보드 없음");
+    await navigator.clipboard.writeText(selected);
+    note("복사했습니다");
+  } catch (e) {
+    note(copyByTextarea(selected) ? "복사했습니다" : "복사하지 못했습니다");
+  }
+  ime.focus({ preventScroll: true });
+}
+
+async function pasteClipboard() {
+  let text = null;
+  try {
+    if (!navigator.clipboard) throw new Error("클립보드 없음");
+    text = await navigator.clipboard.readText();
+  } catch (e) {
+    // 권한이 막힌 기기에서는 시스템 붙여넣기를 쓸 수 있는 입력창을 띄운다
+    text = window.prompt("여기에 붙여넣기 한 다음 확인을 누르세요", "");
+  }
+  if (text) {
+    state.doc.insert(text.replace(/\r\n?/g, "\n"), "paste");
+    note("붙여넣었습니다");
+  }
+  ime.focus({ preventScroll: true });
+  render();
+}
+
 // --- 마우스·터치 ---
 
 /** 화면 좌표 → 종이 mm 좌표 */
@@ -177,31 +231,118 @@ function indexAtEvent(event, boundary) {
   return index;
 }
 
+// 마우스·펜: 누르면 커서, 끌면 선택.
+// 손가락: 두드리면 커서, 두 번 두드리면 낱말 선택, 길게 눌렀다 끌면 범위 선택.
+//         그냥 끌면 화면이 밀린다 (선택 버튼을 켜 두면 바로 끌어서 선택한다).
+const LONG_PRESS_MS = 450;
+const TAP_SLOP = 10; // 이만큼 안에서 움직이면 제자리로 본다 (화면 px)
+const DOUBLE_TAP_MS = 320;
+
 let dragging = false;
+let press = null; // 손가락으로 누르고 있는 중의 정보
+let lastTap = null;
+
+const isWordChar = (ch) => Boolean(ch) && !/\s/.test(ch);
+
+/** 띄어쓰기·줄바꿈 사이의 낱말을 선택한다. 고를 낱말이 없으면 false. */
+function selectWord(index) {
+  const { text } = state.doc;
+  let start = isWordChar(text[index]) ? index : Math.max(0, index - 1);
+  if (!isWordChar(text[start])) return false;
+  let end = start;
+  while (start > 0 && isWordChar(text[start - 1])) start -= 1;
+  while (end < text.length && isWordChar(text[end])) end += 1;
+  state.doc.moveTo(start);
+  state.doc.moveTo(end, true);
+  return true;
+}
+
+function startPress(e) {
+  press = { id: e.pointerId, x: e.clientX, y: e.clientY,
+            index: indexAtEvent(e, false), selecting: false };
+  press.timer = setTimeout(() => {
+    if (!press) return;
+    press.selecting = true;
+    state.doc.moveTo(press.index);
+    try { svg.setPointerCapture(press.id); } catch (err) { /* 이미 뗀 손가락 */ }
+    note("끌어서 선택하세요");
+    render();
+  }, LONG_PRESS_MS);
+}
+
+function endPress() {
+  clearTimeout(press.timer);
+  if (press.selecting) {
+    try { svg.releasePointerCapture(press.id); } catch (err) { /* 이미 놓음 */ }
+    note(state.doc.selectedText() ? "복사·지우기 버튼을 쓸 수 있습니다" : "");
+  } else {
+    const now = Date.now();
+    const near = lastTap && Math.hypot(press.x - lastTap.x, press.y - lastTap.y) < 24;
+    if (near && now - lastTap.time < DOUBLE_TAP_MS && selectWord(press.index)) {
+      lastTap = null;
+      note("낱말을 선택했습니다");
+    } else {
+      state.doc.moveTo(press.index);
+      lastTap = { time: now, x: press.x, y: press.y };
+    }
+  }
+  press = null;
+  ime.focus({ preventScroll: true });
+  render();
+}
+
 svg.addEventListener("pointerdown", (e) => {
-  // 손가락은 화면을 밀거나 확대하는 데 쓰므로 커서만 옮긴다
-  const canDrag = e.pointerType !== "touch";
-  if (canDrag) e.preventDefault();
+  if (e.pointerType === "touch" && !state.selectMode) {
+    startPress(e);
+    return;
+  }
+  e.preventDefault();
   ime.focus({ preventScroll: true });
   state.doc.moveTo(indexAtEvent(e, e.shiftKey), e.shiftKey);
-  if (canDrag) {
-    dragging = true;
-    svg.setPointerCapture(e.pointerId);
-  }
+  dragging = true;
+  svg.setPointerCapture(e.pointerId);
   render();
 });
+
 svg.addEventListener("pointermove", (e) => {
+  if (press && e.pointerId === press.id) {
+    if (press.selecting) {
+      state.doc.moveTo(indexAtEvent(e, true), true);
+      render();
+    } else if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > TAP_SLOP) {
+      clearTimeout(press.timer); // 화면을 미는 중이다
+      press = null;
+    }
+    return;
+  }
   if (!dragging) return;
   state.doc.moveTo(indexAtEvent(e, true), true);
   render();
 });
-const stopDrag = (e) => {
-  if (!dragging) return;
-  dragging = false;
-  try { svg.releasePointerCapture(e.pointerId); } catch (err) { /* 이미 놓음 */ }
-};
-svg.addEventListener("pointerup", stopDrag);
-svg.addEventListener("pointercancel", stopDrag);
+
+// 길게 눌러 선택하는 동안에는 화면이 밀리지 않게 막는다
+svg.addEventListener("touchmove", (e) => {
+  if (press && press.selecting) e.preventDefault();
+}, { passive: false });
+
+svg.addEventListener("pointerup", (e) => {
+  if (press && e.pointerId === press.id) {
+    endPress();
+  } else if (dragging) {
+    dragging = false;
+    try { svg.releasePointerCapture(e.pointerId); } catch (err) { /* 이미 놓음 */ }
+  }
+});
+
+svg.addEventListener("pointercancel", (e) => {
+  if (press && e.pointerId === press.id) {
+    clearTimeout(press.timer);
+    press = null;
+  } else if (dragging) {
+    dragging = false;
+    try { svg.releasePointerCapture(e.pointerId); } catch (err) { /* 이미 놓음 */ }
+  }
+});
 
 // --- 글자 입력 (조합 포함) ---
 
@@ -286,6 +427,24 @@ ime.addEventListener("paste", (e) => {
 $("vertical").addEventListener("click", (e) => {
   state.vertical = !state.vertical;
   e.currentTarget.setAttribute("aria-pressed", String(state.vertical));
+  ime.focus({ preventScroll: true });
+  render();
+});
+$("selectMode").addEventListener("click", (e) => {
+  state.selectMode = !state.selectMode;
+  e.currentTarget.setAttribute("aria-pressed", String(state.selectMode));
+  svg.classList.toggle("selecting", state.selectMode);
+  note(state.selectMode ? "끌어서 글자를 선택하세요 (화면 밀기는 잠시 멈춥니다)" : "");
+});
+$("selectAll").addEventListener("click", () => {
+  state.doc.selectAll();
+  ime.focus({ preventScroll: true });
+  render();
+});
+$("copy").addEventListener("click", () => copySelection());
+$("paste").addEventListener("click", () => pasteClipboard());
+$("erase").addEventListener("click", () => {
+  state.doc.deleteToRowStart();
   ime.focus({ preventScroll: true });
   render();
 });
