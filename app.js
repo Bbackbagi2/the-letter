@@ -16,6 +16,9 @@ const STORE_KEY = "the-letter";
 const FONT_CACHE = "the-letter-fonts-v3"; // sw.js의 FONTS와 같은 이름이어야 한다
 const FONT_LIMIT = 3; // sw.js의 FONT_LIMIT와 같은 값
 const IME_PX = 10; // 입력칸은 1mm를 10px로 놓고 짜고, 변환으로 줄인다 (배치 정밀도)
+// 제목이 있던 예전 예시 글. 저장된 글이 이것과 같으면 아직 손대지 않은 것으로 보고
+// 지금 예시로 바꿔 준다 (예시를 고쳐도 옛 글이 계속 남는 문제를 막는다).
+const OLD_SAMPLES = ["\n   서시\n\n\n", "\n   서시\n\n"].map((head) => head + SAMPLE_TEXT);
 
 const $ = (id) => document.getElementById(id);
 const svg = $("paper");
@@ -29,6 +32,7 @@ const state = {
   form: "a4",
   font: DEFAULT_FONT,
   name: "편지",
+  fromSample: false, // 아직 예시 글 그대로인가 (손대면 꺼진다)
   printing: false,
 };
 const loadedFonts = new Set();
@@ -167,7 +171,10 @@ ime.addEventListener("keydown", (e) => {
 
 // --- 글자 입력 ---
 
-ime.addEventListener("input", () => render());
+ime.addEventListener("input", () => {
+  state.fromSample = false; // 한 글자라도 손대면 이제 윤재 님의 글이다
+  render();
+});
 
 let composeStart = 0;
 ime.addEventListener("compositionstart", () => { composeStart = ime.selectionStart; });
@@ -340,6 +347,7 @@ function saveNow() {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       text: ime.value, font: state.font, ratio: state.ratio,
       vertical: state.vertical, name: state.name, form: state.form,
+      sample: state.fromSample,
     }));
   } catch (e) { /* 저장 공간이 없으면 그냥 넘어간다 */ }
 }
@@ -353,8 +361,9 @@ function restore() {
   let found = false;
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    // 빈 글이 저장돼 있으면 지킬 것이 없으므로 예시 글을 다시 넣는다
-    if (typeof saved.text === "string" && saved.text.trim()) {
+    // 빈 글이나 예시 글 그대로면 지킬 것이 없으므로 지금 예시를 다시 넣는다
+    const untouched = saved.sample === true || OLD_SAMPLES.includes(saved.text);
+    if (typeof saved.text === "string" && saved.text.trim() && !untouched) {
       ime.value = saved.text;
       found = true;
     }
@@ -368,6 +377,7 @@ function restore() {
   if (!found) {
     // 처음 열었을 때는 빈 원고지 대신 예시 글을 채워 둔다
     ime.value = SAMPLE_TEXT;
+    state.fromSample = true;
     statusNote = "예시로 윤동주의 시를 넣어 두었습니다";
   }
   const end = ime.value.length;
