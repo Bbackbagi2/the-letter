@@ -82,11 +82,16 @@
   #ime::selection { background: rgba(80, 140, 255, 0.35); }
   #file { display: none; }
   @media print {
+    /* A4 세로 한 장. 배율 100%·여백 없음이면 칸이 도면 치수대로 나온다. */
     @page { size: A4 portrait; margin: 0; }
-    html, body { height: auto; background: #fff; overflow: visible; }
+    html, body { width: 100%; height: 100%; margin: 0; background: #fff; overflow: hidden; }
     header, footer, #banner, #ime { display: none !important; }
-    main { display: block; padding: 0; }
-    #paper { width: 210mm; height: 297mm; max-width: none; max-height: none; box-shadow: none; }
+    main { display: block; width: 100%; height: 100%; padding: 0; }
+    /* 종이 크기를 mm로 못 박지 않고 인쇄 영역을 꽉 채운다. 용지가 A4면 210×297mm
+       그대로이고, Letter처럼 A4보다 짧은 용지에서는 비율을 지키며 줄어들어 한 장에
+       들어간다 (두 장으로 넘치지 않는다). */
+    #paper { display: block; width: 100%; height: 100%;
+      max-width: 100%; max-height: 100%; box-shadow: none; }
   }
 </style>
 </head>

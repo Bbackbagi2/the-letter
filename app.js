@@ -422,7 +422,10 @@ $("file").addEventListener("change", (e) => {
   e.target.value = "";
 });
 $("save").addEventListener("click", downloadText);
-$("print").addEventListener("click", () => window.print());
+$("print").addEventListener("click", () => {
+  note("인쇄 창에서 용지 A4 · 배율 100% · 여백 없음으로 두면 칸이 도면 치수대로 나옵니다");
+  window.print();
+});
 $("vertical").addEventListener("click", (e) => {
   state.vertical = !state.vertical;
   e.currentTarget.setAttribute("aria-pressed", String(state.vertical));
