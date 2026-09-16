@@ -4,6 +4,7 @@ import { ROWS, cursorPositions, indexAt, overflowCount } from "./layout.js";
 import { Doc } from "./editor.js";
 import * as paper from "./paper.js";
 import { FONTS, DEFAULT_FONT } from "./fonts.js";
+import { SAMPLE_TEXT } from "./sample.js";
 
 const INK = "#222222";
 const PREEDIT_INK = "#B4B4B4";
@@ -92,13 +93,14 @@ async function useFont(label) {
   state.font = label;
   const info = FONTS.find((f) => f.label === label);
   if (info && !loadedFonts.has(label)) {
+    const before = statusNote; // 글꼴을 받고 나면 원래 안내 문구로 되돌린다
     note(`글꼴 받는 중… ${label} (${(info.kb / 1024).toFixed(1)}MB)`);
     try {
       const face = new FontFace(label, `url("fonts/${encodeURIComponent(info.file)}")`);
       await face.load();
       document.fonts.add(face);
       loadedFonts.add(label);
-      note("");
+      note(before);
     } catch (e) {
       note(`글꼴을 받지 못했습니다 (${label}). 기본 글꼴로 보여 줍니다.`);
     }
@@ -122,13 +124,23 @@ function save() {
 }
 
 function restore() {
+  let found = false;
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    if (typeof saved.text === "string") state.doc = new Doc(saved.text);
+    if (typeof saved.text === "string") {
+      state.doc = new Doc(saved.text);
+      found = true;
+    }
     if (typeof saved.ratio === "number") state.ratio = saved.ratio;
     if (typeof saved.vertical === "boolean") state.vertical = saved.vertical;
     if (FONTS.some((f) => f.label === saved.font)) state.font = saved.font;
   } catch (e) { /* 저장된 게 깨졌으면 새로 시작 */ }
+  if (!found) {
+    // 처음 열었을 때는 빈 원고지 대신 예시 글을 채워 둔다
+    state.doc = new Doc(SAMPLE_TEXT);
+    statusNote = "예시로 윤동주 「서시」를 넣어 두었습니다. 전체 → 지우기로 비울 수 있습니다.";
+  }
+  state.doc.moveTo(state.doc.text.length); // 이어서 쓸 수 있게 커서를 글 끝에
 }
 
 function downloadText() {

@@ -2,7 +2,7 @@
 const SHELL = "the-letter-shell-v1";
 const FONTS = "the-letter-fonts-v2"; // 글꼴 파일을 다시 만들면 숫자를 올린다
 const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./editor.js",
-                     "./paper.js", "./fonts.js", "./manifest.webmanifest"];
+                     "./paper.js", "./fonts.js", "./sample.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(SHELL).then((c) => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
