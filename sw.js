@@ -1,5 +1,5 @@
 // 오프라인에서도 열리도록 앱 파일을 캐시에 둔다. 글꼴은 쓸 때 받아서 따로 캐시한다.
-const SHELL = "the-letter-shell-v1";
+const SHELL = "the-letter-shell-v2"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
 const FONTS = "the-letter-fonts-v2"; // 글꼴 파일을 다시 만들면 숫자를 올린다
 const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./editor.js",
                      "./paper.js", "./fonts.js", "./sample.js", "./manifest.webmanifest"];
@@ -24,10 +24,14 @@ async function fromCacheFirst(request) {
   return res;
 }
 
-/** 앱 파일: 새 것을 먼저 받아 보고, 연결이 없으면 캐시에 둔 것으로 연다. */
+/** 앱 파일: 새 것을 먼저 받아 보고, 연결이 없으면 캐시에 둔 것으로 연다.
+ *
+ * GitHub Pages가 max-age=600을 붙여 주므로 그냥 fetch하면 최대 10분 묵은 파일을 받는다.
+ * cache: "no-cache"로 서버에 매번 물어보게 한다 (안 바뀌었으면 304라 거의 공짜다).
+ */
 async function fromNetworkFirst(request) {
   try {
-    const res = await fetch(request);
+    const res = await fetch(request.url, { cache: "no-cache", credentials: "same-origin" });
     if (res.ok) (await caches.open(SHELL)).put(request, res.clone());
     return res;
   } catch (err) {

@@ -112,22 +112,27 @@ async function useFont(label) {
 // --- 저장·불러오기 ---
 
 let saveTimer = null;
+
+function saveNow() {
+  clearTimeout(saveTimer);
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      text: state.doc.text, font: state.font, ratio: state.ratio, vertical: state.vertical,
+    }));
+  } catch (e) { /* 저장 공간이 없으면 그냥 넘어간다 */ }
+}
+
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({
-        text: state.doc.text, font: state.font, ratio: state.ratio, vertical: state.vertical,
-      }));
-    } catch (e) { /* 저장 공간이 없으면 그냥 넘어간다 */ }
-  }, 400);
+  saveTimer = setTimeout(saveNow, 400);
 }
 
 function restore() {
   let found = false;
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-    if (typeof saved.text === "string") {
+    // 빈 글이 저장돼 있으면 지킬 것이 없으므로 예시 글을 다시 넣는다
+    if (typeof saved.text === "string" && saved.text.trim()) {
       state.doc = new Doc(saved.text);
       found = true;
     }
@@ -497,5 +502,19 @@ useFont(state.font);
 ime.focus({ preventScroll: true });
 
 if ("serviceWorker" in navigator) {
-  addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  // 새 버전이 자리를 잡으면 한 번만 새로고침해서 바로 반영한다.
+  // 처음 설치될 때도 controllerchange가 오므로, 원래 있던 경우에만 새로고침한다.
+  const hadWorker = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadWorker || reloading) return;
+    reloading = true;
+    saveNow(); // 쓰던 글을 먼저 저장하고 새로고침한다
+    location.reload();
+  });
+  addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+      .then((registration) => registration.update())
+      .catch(() => {});
+  });
 }
