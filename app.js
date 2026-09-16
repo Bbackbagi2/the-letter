@@ -25,6 +25,7 @@ const state = {
   vertical: false,
   ratio: paper.TEXT_RATIO,
   font: DEFAULT_FONT,
+  name: "편지",
   printing: false,
   selectMode: false, // 켜면 손가락으로 끌어서 글자를 선택한다 (폰)
 };
@@ -225,6 +226,7 @@ function saveNow() {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
       text: state.doc.text, font: state.font, ratio: state.ratio, vertical: state.vertical,
+      name: state.name,
     }));
   } catch (e) { /* 저장 공간이 없으면 그냥 넘어간다 */ }
 }
@@ -246,6 +248,7 @@ function restore() {
     if (typeof saved.ratio === "number") state.ratio = saved.ratio;
     if (typeof saved.vertical === "boolean") state.vertical = saved.vertical;
     if (FONTS.some((f) => f.label === saved.font)) state.font = saved.font;
+    if (typeof saved.name === "string" && saved.name.trim()) state.name = saved.name;
   } catch (e) { /* 저장된 게 깨졌으면 새로 시작 */ }
   if (!found) {
     // 처음 열었을 때는 빈 원고지 대신 예시 글을 채워 둔다
@@ -255,14 +258,23 @@ function restore() {
   state.doc.moveTo(state.doc.text.length); // 이어서 쓸 수 있게 커서를 글 끝에
 }
 
+/** 파일 이름으로 쓸 수 없는 글자를 걷어낸다. */
+function safeName(text) {
+  const clean = (text || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim();
+  return clean || "편지";
+}
+
 function downloadText() {
-  const blob = new Blob([state.doc.text], { type: "text/plain;charset=utf-8" });
+  const name = safeName(state.name);
+  // 맨 앞에 BOM(\uFEFF)을 붙인다. 이게 없으면 메모장 같은 프로그램이 UTF-8인 줄 모르고
+  // 다른 인코딩으로 읽어서 글자가 깨진다. 불러올 때는 openFile에서 다시 떼어 낸다.
+  const blob = new Blob(["\uFEFF", state.doc.text], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "편지.txt";
+  a.download = `${name}.txt`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  note("편지.txt로 내려받았습니다");
+  note(`${name}.txt로 내려받았습니다`);
 }
 
 function openFile(file) {
@@ -271,6 +283,8 @@ function openFile(file) {
     const text = String(reader.result).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
     state.doc = new Doc(text);
     state.preedit = "";
+    state.name = safeName(file.name.replace(/\.txt$/i, ""));
+    $("name").value = state.name;
     note(`불러옴: ${file.name}`);
     render();
   };
@@ -617,6 +631,10 @@ $("size").addEventListener("input", (e) => {
   $("sizeValue").textContent = `${e.target.value}%`;
   render();
 });
+$("name").addEventListener("input", (e) => {
+  state.name = e.target.value;
+  save();
+});
 $("open").addEventListener("click", () => $("file").click());
 $("file").addEventListener("change", (e) => {
   if (e.target.files[0]) openFile(e.target.files[0]);
@@ -625,9 +643,19 @@ $("file").addEventListener("change", (e) => {
 $("save").addEventListener("click", downloadText);
 $("print").addEventListener("click", () => window.print());
 
-// 인쇄할 때는 세로 모드여도 용지를 원래 방향(A4 세로)으로 두고 글자만 눕힌다
-addEventListener("beforeprint", () => { state.printing = true; render(); });
-addEventListener("afterprint", () => { state.printing = false; render(); });
+// 인쇄할 때는 세로 모드여도 용지를 원래 방향(A4 세로)으로 두고 글자만 눕힌다.
+// 브라우저는 PDF로 저장할 때 문서 제목을 파일 이름으로 쓰므로 잠시 바꿔 둔다.
+const APP_TITLE = document.title;
+addEventListener("beforeprint", () => {
+  document.title = safeName(state.name);
+  state.printing = true;
+  render();
+});
+addEventListener("afterprint", () => {
+  document.title = APP_TITLE;
+  state.printing = false;
+  render();
+});
 addEventListener("resize", () => render());
 
 // --- 시작 ---
@@ -640,6 +668,7 @@ for (const f of FONTS) {
   $("font").append(option);
 }
 $("font").value = state.font;
+$("name").value = state.name;
 $("size").value = Math.round(state.ratio * 100);
 $("sizeValue").textContent = `${Math.round(state.ratio * 100)}%`;
 $("vertical").setAttribute("aria-pressed", String(state.vertical));

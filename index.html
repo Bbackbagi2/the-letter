@@ -34,6 +34,8 @@
   button:active { background: #e6e6e6; }
   button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
   label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  input[type=text] { font: inherit; padding: 6px 8px; width: 7em; border: 1px solid var(--line);
+    border-radius: 7px; background: #fff; color: inherit; }
   input[type=range] { width: 120px; }
   main { flex: 1; display: grid; place-items: center; padding: 10px; min-height: 0; }
   /* 손가락은 화면 밀기·손가락 확대에 쓰고, 마우스로만 끌어서 선택한다 (app.js) */
@@ -62,6 +64,8 @@
 </head>
 <body>
 <header>
+  <label>이름 <input id="name" type="text" value="편지" maxlength="40"
+    title="저장·인쇄할 때 쓰는 파일 이름"></label>
   <button id="open">불러오기</button>
   <button id="save">저장</button>
   <button id="print">인쇄 · PDF</button>
