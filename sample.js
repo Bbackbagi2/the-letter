@@ -3,7 +3,6 @@
 export const SAMPLE_TEXT = `
    서시
 
-
 죽는날 까지 하늘을 우러러
 한점 부끄럼이 없기를
 잎새에 이는 바람에도
