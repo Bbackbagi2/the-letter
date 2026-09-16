@@ -1,9 +1,10 @@
 // 오프라인에서도 열리도록 앱 파일을 캐시에 둔다. 글꼴은 쓸 때 받아서 따로 캐시한다.
-const SHELL = "the-letter-shell-v3"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
+const SHELL = "the-letter-shell-v4"; // 앱 파일 캐시를 갈아 끼울 때 숫자를 올린다
 const FONTS = "the-letter-fonts-v3"; // 글꼴 파일을 다시 만들면 숫자를 올린다
 const FONT_LIMIT = 3; // 글꼴은 최근 3개만 남긴다 (한 종이 2~3MB라 용량을 많이 먹는다)
-const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./editor.js",
-                     "./paper.js", "./fonts.js", "./sample.js", "./manifest.webmanifest"];
+const SHELL_FILES = ["./", "./index.html", "./app.js", "./layout.js", "./paper.js",
+                     "./fonts.js", "./sample.js", "./manifest.webmanifest",
+                     "./fonts/tl-grid.woff2"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil((async () => {
@@ -79,7 +80,7 @@ async function fromNetworkFirst(request) {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== location.origin) return;
-  e.respondWith(url.pathname.includes("/fonts/")
-    ? fromCacheFirst(e.request)
-    : fromNetworkFirst(e.request));
+  // 손글씨 글꼴만 3개 큐로 관리한다. 격자 글꼴(tl-grid)은 앱에 늘 필요하므로 앱 파일 취급.
+  const isHandwriting = url.pathname.includes("/fonts/") && !url.pathname.includes("tl-grid");
+  e.respondWith(isHandwriting ? fromCacheFirst(e.request) : fromNetworkFirst(e.request));
 });

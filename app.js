@@ -1,18 +1,21 @@
-// 화면과 입력 처리. 배치 계산은 layout.js, 편집 상태는 editor.js, 그리기는 paper.js.
+// 화면과 입력 처리. 배치 계산은 layout.js, 그리기는 paper.js.
+//
+// 글을 담는 곳은 종이 위에 덮인 투명한 textarea(#ime)다. 글자 폭이 모두 한 칸인
+// 전용 글꼴(tl-grid)을 씌워서, 브라우저가 글자를 원고지 칸과 똑같은 격자에 배치한다.
+// 그래서 커서·선택·복사 풍선·키보드·받아쓰기 같은 편집 기능을 기기가 원래 하던 방식
+// 그대로 쓸 수 있다. 눈에 보이는 글자는 그 아래 SVG가 손글씨 글꼴로 그린다.
 
-import { ROWS, cursorPositions, indexAt, overflowCount } from "./layout.js";
-import { Doc } from "./editor.js";
+import { COLS, ROWS, cursorPositions, indexAt, overflowCount } from "./layout.js";
 import * as paper from "./paper.js";
 import { FONTS, DEFAULT_FONT } from "./fonts.js";
 import { SAMPLE_TEXT } from "./sample.js";
 
 const INK = "#222222";
 const PREEDIT_INK = "#B4B4B4";
-const CARET_FILL = "rgba(80,140,255,0.24)";
-const SELECTION_FILL = "rgba(80,140,255,0.43)";
 const STORE_KEY = "the-letter";
 const FONT_CACHE = "the-letter-fonts-v3"; // sw.js의 FONTS와 같은 이름이어야 한다
 const FONT_LIMIT = 3; // sw.js의 FONT_LIMIT와 같은 값
+const IME_PX = 10; // 입력칸은 1mm를 10px로 놓고 짜고, 변환으로 줄인다 (배치 정밀도)
 
 const $ = (id) => document.getElementById(id);
 const svg = $("paper");
@@ -20,19 +23,16 @@ const ime = $("ime");
 const statusBar = $("status");
 
 const state = {
-  doc: new Doc(""),
-  preedit: "",
+  preedit: null, // 조합 중인 글자 구간 [시작, 끝]
   vertical: false,
   ratio: paper.TEXT_RATIO,
+  form: "a4",
   font: DEFAULT_FONT,
   name: "편지",
   printing: false,
-  selectMode: false, // 켜면 손가락으로 끌어서 글자를 선택한다 (폰)
 };
 const loadedFonts = new Set();
 const loadedFaces = []; // 이번에 켜 둔 동안 등록한 글꼴 (먼저 받은 것부터)
-// 글꼴 이름은 CSS·FontFace에 넘길 때 ASCII 별명을 쓴다. 한글·공백이 섞인 이름이
-// 기기마다 다르게 해석될 여지를 없앤다. 화면에 보이는 이름은 fonts.js의 label 그대로다.
 const FAMILIES = new Map(FONTS.map((f, i) => [f.label, `tl-font-${i}`]));
 const familyOf = (label) => FAMILIES.get(label) || label;
 let statusNote = "";
@@ -40,36 +40,52 @@ let statusNote = "";
 // --- 그리기 ---
 
 function render() {
-  const { doc, preedit, vertical, printing } = state;
-  // 조합 중인 글자를 커서 자리에 끼워 넣은 상태로 배치를 계산한다
-  const shown = doc.text.slice(0, doc.caret) + preedit + doc.text.slice(doc.caret);
-  const positions = cursorPositions(shown);
+  const { vertical, printing } = state;
   const rotated = vertical && !printing;
-
   svg.setAttribute("viewBox", rotated ? `0 0 ${paper.PAGE_H} ${paper.PAGE_W}`
     : `0 0 ${paper.PAGE_W} ${paper.PAGE_H}`);
-  const inner = paper.pageSVG(shown, {
-    family: familyOf(state.font), ratio: state.ratio, vertical, ink: INK, preeditInk: PREEDIT_INK,
-    positions, caret: doc.caret, selection: preedit ? null : doc.selection(),
-    preeditRange: preedit ? [doc.caret, doc.caret + preedit.length] : null,
-    caretFill: CARET_FILL, selectionFill: SELECTION_FILL,
+  const inner = paper.pageSVG(ime.value, {
+    family: familyOf(state.font), ratio: state.ratio, vertical,
+    ink: INK, preeditInk: PREEDIT_INK, preeditRange: state.preedit,
+    showTrim: !printing, // 잘려 나갈 자리는 화면에서만 옅게 (인쇄 잉크를 쓰지 않는다)
   });
   // 세로 모드 화면: 종이를 시계 방향 90° 돌려 보여 준다 (1줄이 오른쪽 끝 열)
   svg.innerHTML = rotated
     ? `<g id="content" transform="translate(${paper.PAGE_H} 0) rotate(90)">${inner}</g>`
     : `<g id="content">${inner}</g>`;
-
-  placeIme(positions[doc.caret]);
+  placeIme();
   showStatus();
   save();
 }
 
+/** 투명 입력칸을 원고지 격자에 맞춰 올려 놓는다.
+ *
+ * 종이와 같은 변환(getScreenCTM)을 그대로 CSS transform으로 쓰기 때문에 확대나
+ * 세로쓰기 회전까지 자동으로 따라간다. 글자 상자 높이가 한 칸(CELL)이고 줄 높이가
+ * 칸+띠이므로, 남는 띠의 절반(BAND/2)만큼 위로 올려야 첫 줄이 첫 칸에 맞는다.
+ */
+function placeIme() {
+  const content = svg.querySelector("#content");
+  const ctm = content && content.getScreenCTM();
+  if (!ctm) return;
+  ime.style.fontSize = `${paper.CELL * IME_PX}px`;
+  ime.style.lineHeight = `${(paper.CELL + paper.BAND) * IME_PX}px`;
+  ime.style.width = `${COLS * paper.CELL * IME_PX}px`;
+  ime.style.height = `${ROWS * (paper.CELL + paper.BAND) * IME_PX}px`;
+  const matrix = new DOMMatrix([ctm.a, ctm.b, ctm.c, ctm.d, ctm.e, ctm.f])
+    .translate(paper.GRID_X, paper.GRID_Y + paper.BAND / 2)
+    .scale(1 / IME_PX);
+  ime.style.transform = matrix.toString();
+}
+
 function showStatus() {
-  const over = overflowCount(state.doc.text);
+  const text = ime.value;
+  const over = overflowCount(text);
   const parts = [];
   if (statusNote) parts.push(statusNote);
-  if (over) parts.push(`${ROWS}줄을 넘은 글자 ${over}자는 표시되지 않습니다`);
-  statusBar.textContent = parts.join(" · ") || " ";
+  parts.push(`${[...text].filter((c) => c !== "\n").length}자`);
+  if (over) parts.push(`${ROWS}줄을 넘은 ${over}자는 인쇄되지 않습니다`);
+  statusBar.textContent = parts.join(" · ");
 }
 
 function note(text) {
@@ -77,31 +93,112 @@ function note(text) {
   showStatus();
 }
 
-/** 보이지 않는 입력칸을 커서 칸 위로 옮긴다. 한글 조합 후보 창이 그 옆에 뜬다. */
-function placeIme([row, col]) {
-  const content = svg.querySelector("#content");
-  const ctm = content?.getScreenCTM();
-  if (!ctm) return;
-  const r = paper.cellRect(Math.min(row, ROWS - 1), col);
-  const point = svg.createSVGPoint();
-  point.x = r.x; point.y = r.y;
-  const topLeft = point.matrixTransform(ctm);
-  point.x = r.x + r.w; point.y = r.y + r.h;
-  const bottomRight = point.matrixTransform(ctm);
-  ime.style.left = `${Math.min(topLeft.x, bottomRight.x)}px`;
-  ime.style.top = `${Math.min(topLeft.y, bottomRight.y)}px`;
-  ime.style.width = `${Math.abs(bottomRight.x - topLeft.x)}px`;
-  ime.style.height = `${Math.abs(bottomRight.y - topLeft.y)}px`;
-  ime.style.fontSize = `${Math.abs(bottomRight.y - topLeft.y)}px`;
+/** 놓치면 안 되는 문제는 위쪽에 띠로 띄우고, 닫을 때까지 남겨 둔다. */
+function alarm(text) {
+  $("bannerText").textContent = text;
+  $("banner").hidden = false;
 }
+
+// --- 커서 (기기 기본 편집 기능을 그대로 쓰고, 원고지 규칙만 거든다) ---
+
+const caretIndex = () =>
+  (ime.selectionDirection === "backward" ? ime.selectionStart : ime.selectionEnd);
+
+function moveTo(index, extend) {
+  const to = Math.max(0, Math.min(index, ime.value.length));
+  if (!extend) {
+    ime.setSelectionRange(to, to);
+    return;
+  }
+  const back = ime.selectionDirection === "backward";
+  const anchor = back ? ime.selectionEnd : ime.selectionStart;
+  if (to < anchor) ime.setSelectionRange(to, anchor, "backward");
+  else ime.setSelectionRange(anchor, to, "forward");
+}
+
+/** 같은 칸 번호로 이전/다음 줄. 세로 모드에서 ←→ 를 이 동작에 쓴다. */
+function moveRow(step, extend) {
+  const text = ime.value;
+  const [row, col] = cursorPositions(text)[caretIndex()];
+  moveTo(indexAt(text, row + step, col), extend);
+}
+
+/** 커서가 있는 줄의 첫 칸까지 지운다 (⌘⌫). 이미 첫 칸이면 한 글자. */
+function deleteToRowStart() {
+  if (ime.selectionStart !== ime.selectionEnd) {
+    ime.setRangeText("", ime.selectionStart, ime.selectionEnd, "end");
+  } else {
+    const text = ime.value;
+    const caret = caretIndex();
+    const [row] = cursorPositions(text)[caret];
+    const start = indexAt(text, row, 0);
+    const from = start === caret ? Math.max(0, caret - 1) : start;
+    ime.setRangeText("", from, caret, "end");
+  }
+  render();
+}
+
+// 세로 모드에서는 화면이 돌아가 있으므로 방향키도 화면 기준으로 맞춰 준다
+const VERTICAL_ARROWS = {
+  ArrowUp: ["char", -1], ArrowDown: ["char", 1],
+  ArrowRight: ["row", -1], ArrowLeft: ["row", 1],
+};
+
+ime.addEventListener("keydown", (e) => {
+  if (e.isComposing) return;
+  const command = e.metaKey || e.ctrlKey;
+  if (command && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    downloadText();
+    return;
+  }
+  if (command && e.key === "Backspace") {
+    e.preventDefault();
+    deleteToRowStart();
+    return;
+  }
+  const arrow = state.vertical && !command && VERTICAL_ARROWS[e.key];
+  if (arrow) {
+    e.preventDefault();
+    if (arrow[0] === "char") moveTo(caretIndex() + arrow[1], e.shiftKey);
+    else moveRow(arrow[1], e.shiftKey);
+  }
+});
+
+// --- 글자 입력 ---
+
+ime.addEventListener("input", () => render());
+
+let composeStart = 0;
+ime.addEventListener("compositionstart", () => { composeStart = ime.selectionStart; });
+ime.addEventListener("compositionupdate", (e) => {
+  // 조합 중인 글자는 옅게 그려서 아직 확정되지 않았음을 보여 준다
+  state.preedit = [composeStart, composeStart + (e.data || "").length];
+});
+ime.addEventListener("compositionend", () => {
+  state.preedit = null;
+  render();
+});
+
+// 30줄을 넘겨도 입력칸이 스스로 스크롤되면 격자가 어긋난다. 늘 맨 위에 붙여 둔다.
+ime.addEventListener("scroll", () => {
+  ime.scrollTop = 0;
+  ime.scrollLeft = 0;
+});
 
 // --- 글꼴 ---
 
+function progress(fraction) {
+  const bar = $("progress");
+  bar.hidden = fraction === null;
+  bar.classList.toggle("unknown", fraction === -1);
+  $("progressBar").style.width = fraction > 0 ? `${Math.round(fraction * 100)}%` : "0%";
+}
+
 /** 실제로 있는 글꼴 주소를 찾는다.
  *
- * 한글 파일 이름은 완성형(NFC)과 분해형(NFD)이라는 두 가지 표기가 있고, 서버는 한쪽만
- * 인정한다. 목록(fonts.js)이 브라우저 캐시에 낡은 채로 남아 있으면 없는 쪽 이름으로
- * 요청해 404가 난다. 그래서 두 표기를 모두 확인해 있는 쪽을 쓴다.
+ * 한글 파일 이름은 완성형(NFC)과 분해형(NFD) 두 표기가 있고 서버는 한쪽만 인정한다.
+ * 목록이 브라우저 캐시에 낡은 채로 남아 있으면 없는 쪽으로 요청해 404가 난다.
  */
 async function findFontUrl(file) {
   const names = [...new Set([file, file.normalize("NFC"), file.normalize("NFD")])];
@@ -119,16 +216,33 @@ async function findFontUrl(file) {
 async function loadFont(info, family) {
   const url = await findFontUrl(info.file);
   const ways = [
-    ["주소로 등록", async () => {
-      const face = new FontFace(family, `url("${url}")`);
+    ["받아서 등록", async () => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const total = Number(response.headers.get("content-length")) || 0;
+      const reader = response.body && response.body.getReader();
+      let data;
+      if (reader) {
+        const chunks = [];
+        let received = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          progress(total ? received / total : -1);
+        }
+        data = await new Blob(chunks).arrayBuffer();
+      } else {
+        data = await response.arrayBuffer();
+      }
+      const face = new FontFace(family, data);
       await face.load();
       document.fonts.add(face);
       return face;
     }],
-    ["파일로 등록", async () => {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const face = new FontFace(family, await response.arrayBuffer());
+    ["주소로 등록", async () => {
+      const face = new FontFace(family, `url("${url}")`);
       await face.load();
       document.fonts.add(face);
       return face;
@@ -182,7 +296,7 @@ async function showFontCache(tell = false) {
   if (tell) note(text);
 }
 
-/** 화면에 안 쓰는 글꼴은 메모리에서도 놓아 준다. 저장된 글꼴과 같이 3개까지만 들고 있는다. */
+/** 화면에 안 쓰는 글꼴은 메모리에서도 놓아 준다. 저장된 글꼴처럼 3개까지만 들고 있는다. */
 function trimLoadedFonts() {
   while (loadedFaces.length > FONT_LIMIT) {
     const oldest = loadedFaces.findIndex((f) => f.label !== state.font);
@@ -199,17 +313,16 @@ async function useFont(label) {
   state.font = label;
   const info = FONTS.find((f) => f.label === label);
   if (info && !loadedFonts.has(label)) {
-    const before = statusNote; // 글꼴을 받고 나면 원래 안내 문구로 되돌린다
-    note(`${label} 받는 중… (${(info.kb / 1024).toFixed(1)}MB)`);
+    progress(0);
     try {
       const face = await loadFont(info, familyOf(label));
       loadedFonts.add(label);
       if (face) loadedFaces.push({ label, face });
       trimLoadedFonts();
-      note(before);
     } catch (e) {
-      note(`${label}을 받지 못했습니다 — ${e.message}`);
+      alarm(`${label}을 받지 못했습니다 — ${e.message}`);
     }
+    progress(null);
   }
   // 글꼴이 준비되기 전에 잰 글자 크기가 남아 있을 수 있으니 항상 지운다
   paper.clearFontCache();
@@ -225,8 +338,8 @@ function saveNow() {
   clearTimeout(saveTimer);
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify({
-      text: state.doc.text, font: state.font, ratio: state.ratio, vertical: state.vertical,
-      name: state.name,
+      text: ime.value, font: state.font, ratio: state.ratio,
+      vertical: state.vertical, name: state.name, form: state.form,
     }));
   } catch (e) { /* 저장 공간이 없으면 그냥 넘어간다 */ }
 }
@@ -242,33 +355,36 @@ function restore() {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
     // 빈 글이 저장돼 있으면 지킬 것이 없으므로 예시 글을 다시 넣는다
     if (typeof saved.text === "string" && saved.text.trim()) {
-      state.doc = new Doc(saved.text);
+      ime.value = saved.text;
       found = true;
     }
     if (typeof saved.ratio === "number") state.ratio = saved.ratio;
     if (typeof saved.vertical === "boolean") state.vertical = saved.vertical;
     if (FONTS.some((f) => f.label === saved.font)) state.font = saved.font;
     if (typeof saved.name === "string" && saved.name.trim()) state.name = saved.name;
+    if (paper.FORMS[saved.form]) state.form = saved.form;
   } catch (e) { /* 저장된 게 깨졌으면 새로 시작 */ }
+  paper.setForm(state.form);
   if (!found) {
     // 처음 열었을 때는 빈 원고지 대신 예시 글을 채워 둔다
-    state.doc = new Doc(SAMPLE_TEXT);
-    statusNote = "예시로 윤동주 「서시」를 넣어 두었습니다. 전체 → 지우기로 비울 수 있습니다.";
+    ime.value = SAMPLE_TEXT;
+    statusNote = "예시로 윤동주의 시를 넣어 두었습니다";
   }
-  state.doc.moveTo(state.doc.text.length); // 이어서 쓸 수 있게 커서를 글 끝에
+  const end = ime.value.length;
+  ime.setSelectionRange(end, end); // 이어서 쓸 수 있게 커서를 글 끝에
 }
 
 /** 파일 이름으로 쓸 수 없는 글자를 걷어낸다. */
 function safeName(text) {
-  const clean = (text || "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "").trim();
+  const clean = (text || "").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
   return clean || "편지";
 }
 
 function downloadText() {
   const name = safeName(state.name);
-  // 맨 앞에 BOM(\uFEFF)을 붙인다. 이게 없으면 메모장 같은 프로그램이 UTF-8인 줄 모르고
+  // 맨 앞에 BOM을 붙인다. 이게 없으면 메모장 같은 프로그램이 UTF-8인 줄 모르고
   // 다른 인코딩으로 읽어서 글자가 깨진다. 불러올 때는 openFile에서 다시 떼어 낸다.
-  const blob = new Blob(["\uFEFF", state.doc.text], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob(["﻿", ime.value], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `${name}.txt`;
@@ -280,357 +396,22 @@ function downloadText() {
 function openFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
-    const text = String(reader.result).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
-    state.doc = new Doc(text);
-    state.preedit = "";
+    ime.value = String(reader.result).replace(/^﻿/, "").replace(/\r\n?/g, "\n");
+    state.preedit = null;
     state.name = safeName(file.name.replace(/\.txt$/i, ""));
     $("name").value = state.name;
+    const end = ime.value.length;
+    ime.setSelectionRange(end, end);
     note(`불러옴: ${file.name}`);
     render();
   };
-  reader.onerror = () => note("파일을 읽지 못했습니다");
+  reader.onerror = () => alarm(`${file.name}을 읽지 못했습니다`);
   reader.readAsText(file, "utf-8");
 }
 
-// --- 클립보드 (폰에는 ⌘C·⌘V가 없어 버튼으로 쓴다) ---
-
-/** 클립보드 API가 막힌 기기를 위한 대비책. 잠깐 만든 입력칸으로 복사한다. */
-function copyByTextarea(text) {
-  const box = document.createElement("textarea");
-  box.value = text;
-  box.readOnly = true;
-  box.style.cssText = "position:fixed;top:0;left:0;opacity:0";
-  document.body.append(box);
-  box.select();
-  let copied = false;
-  try {
-    copied = document.execCommand("copy");
-  } catch (e) {
-    copied = false;
-  }
-  box.remove();
-  return copied;
-}
-
-async function copySelection() {
-  const selected = state.doc.selectedText();
-  if (!selected) {
-    note("먼저 글자를 선택하세요 (길게 눌렀다 끌기, 또는 전체 버튼)");
-    return;
-  }
-  try {
-    if (!navigator.clipboard) throw new Error("클립보드 없음");
-    await navigator.clipboard.writeText(selected);
-    note("복사했습니다");
-  } catch (e) {
-    note(copyByTextarea(selected) ? "복사했습니다" : "복사하지 못했습니다");
-  }
-  ime.focus({ preventScroll: true });
-}
-
-async function pasteClipboard() {
-  let text = null;
-  try {
-    if (!navigator.clipboard) throw new Error("클립보드 없음");
-    text = await navigator.clipboard.readText();
-  } catch (e) {
-    // 권한이 막힌 기기에서는 시스템 붙여넣기를 쓸 수 있는 입력창을 띄운다
-    text = window.prompt("여기에 붙여넣기 한 다음 확인을 누르세요", "");
-  }
-  if (text) {
-    state.doc.insert(text.replace(/\r\n?/g, "\n"), "paste");
-    note("붙여넣었습니다");
-  }
-  ime.focus({ preventScroll: true });
-  render();
-}
-
-// --- 마우스·터치 ---
-
-/** 화면 좌표 → 종이 mm 좌표 */
-function toPaper(event) {
-  const content = svg.querySelector("#content");
-  const point = svg.createSVGPoint();
-  point.x = event.clientX;
-  point.y = event.clientY;
-  return point.matrixTransform(content.getScreenCTM().inverse());
-}
-
-/** boundary=true(드래그·Shift+클릭)면 칸의 뒤쪽 절반을 눌렀을 때 그 글자 뒤로 잡는다. */
-function indexAtEvent(event, boundary) {
-  const { text } = state.doc;
-  const p = toPaper(event);
-  const [row, col] = paper.cellAt(p.x, p.y);
-  let index = indexAt(text, row, col);
-  if (boundary && index < text.length && text[index] !== "\n") {
-    const [r, c] = cursorPositions(text)[index];
-    if (r === row && c === col && p.x > paper.cellRect(row, col).x + paper.CELL / 2) index += 1;
-  }
-  return index;
-}
-
-// 마우스·펜: 누르면 커서, 끌면 선택.
-// 손가락: 두드리면 커서, 두 번 두드리면 낱말 선택, 길게 눌렀다 끌면 범위 선택.
-//         그냥 끌면 화면이 밀린다 (선택 버튼을 켜 두면 바로 끌어서 선택한다).
-const LONG_PRESS_MS = 450;
-const TAP_SLOP = 10; // 이만큼 안에서 움직이면 제자리로 본다 (화면 px)
-const DOUBLE_TAP_MS = 320;
-
-let dragging = false;
-let press = null; // 손가락으로 누르고 있는 중의 정보
-let lastTap = null;
-
-const isWordChar = (ch) => Boolean(ch) && !/\s/.test(ch);
-
-/** 띄어쓰기·줄바꿈 사이의 낱말을 선택한다. 고를 낱말이 없으면 false. */
-function selectWord(index) {
-  const { text } = state.doc;
-  let start = isWordChar(text[index]) ? index : Math.max(0, index - 1);
-  if (!isWordChar(text[start])) return false;
-  let end = start;
-  while (start > 0 && isWordChar(text[start - 1])) start -= 1;
-  while (end < text.length && isWordChar(text[end])) end += 1;
-  state.doc.moveTo(start);
-  state.doc.moveTo(end, true);
-  return true;
-}
-
-function startPress(e) {
-  press = { id: e.pointerId, x: e.clientX, y: e.clientY,
-            index: indexAtEvent(e, false), selecting: false };
-  press.timer = setTimeout(() => {
-    if (!press) return;
-    press.selecting = true;
-    state.doc.moveTo(press.index);
-    try { svg.setPointerCapture(press.id); } catch (err) { /* 이미 뗀 손가락 */ }
-    note("끌어서 선택하세요");
-    render();
-  }, LONG_PRESS_MS);
-}
-
-function endPress() {
-  clearTimeout(press.timer);
-  if (press.selecting) {
-    try { svg.releasePointerCapture(press.id); } catch (err) { /* 이미 놓음 */ }
-    note(state.doc.selectedText() ? "복사·지우기 버튼을 쓸 수 있습니다" : "");
-  } else {
-    const now = Date.now();
-    const near = lastTap && Math.hypot(press.x - lastTap.x, press.y - lastTap.y) < 24;
-    if (near && now - lastTap.time < DOUBLE_TAP_MS && selectWord(press.index)) {
-      lastTap = null;
-      note("낱말을 선택했습니다");
-    } else {
-      state.doc.moveTo(press.index);
-      lastTap = { time: now, x: press.x, y: press.y };
-    }
-  }
-  press = null;
-  ime.focus({ preventScroll: true });
-  render();
-}
-
-svg.addEventListener("pointerdown", (e) => {
-  if (e.pointerType === "touch" && !state.selectMode) {
-    startPress(e);
-    return;
-  }
-  e.preventDefault();
-  ime.focus({ preventScroll: true });
-  state.doc.moveTo(indexAtEvent(e, e.shiftKey), e.shiftKey);
-  dragging = true;
-  svg.setPointerCapture(e.pointerId);
-  render();
-});
-
-svg.addEventListener("pointermove", (e) => {
-  if (press && e.pointerId === press.id) {
-    if (press.selecting) {
-      state.doc.moveTo(indexAtEvent(e, true), true);
-      render();
-    } else if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > TAP_SLOP) {
-      clearTimeout(press.timer); // 화면을 미는 중이다
-      press = null;
-    }
-    return;
-  }
-  if (!dragging) return;
-  state.doc.moveTo(indexAtEvent(e, true), true);
-  render();
-});
-
-// 길게 눌러 선택하는 동안에는 화면이 밀리지 않게 막는다
-svg.addEventListener("touchmove", (e) => {
-  if (press && press.selecting) e.preventDefault();
-}, { passive: false });
-
-svg.addEventListener("pointerup", (e) => {
-  if (press && e.pointerId === press.id) {
-    endPress();
-  } else if (dragging) {
-    dragging = false;
-    try { svg.releasePointerCapture(e.pointerId); } catch (err) { /* 이미 놓음 */ }
-  }
-});
-
-svg.addEventListener("pointercancel", (e) => {
-  if (press && e.pointerId === press.id) {
-    clearTimeout(press.timer);
-    press = null;
-  } else if (dragging) {
-    dragging = false;
-    try { svg.releasePointerCapture(e.pointerId); } catch (err) { /* 이미 놓음 */ }
-  }
-});
-
-// 안드로이드 크롬은 click 때 focus해야 키보드를 올려 주는 경우가 있다
-svg.addEventListener("click", () => ime.focus({ preventScroll: true }));
-
-// --- 글자 입력 (조합 포함) ---
-
-ime.addEventListener("compositionupdate", (e) => {
-  state.preedit = e.data || "";
-  render();
-});
-ime.addEventListener("compositionend", (e) => {
-  state.preedit = "";
-  if (e.data) state.doc.insert(e.data);
-  ime.value = "";
-  render();
-});
-ime.addEventListener("input", (e) => {
-  if (e.isComposing || state.preedit) return;
-  if (ime.value) {
-    state.doc.insert(ime.value);
-    ime.value = "";
-    render();
-  }
-});
-
-// 폰 키보드는 Backspace·엔터를 keydown으로 알려 주지 않는다 (keyCode 229).
-// 그래서 beforeinput의 inputType으로 받는다. 조합 중에는 compositionend가 처리한다.
-ime.addEventListener("beforeinput", (e) => {
-  if (e.isComposing) return;
-  const doc = state.doc;
-  const type = e.inputType;
-  if (type === "insertText" && e.data) {
-    doc.insert(e.data);
-  } else if (type === "insertLineBreak" || type === "insertParagraph") {
-    doc.insert("\n");
-  } else if (type === "deleteContentBackward") {
-    doc.backspace();
-  } else if (type === "deleteContentForward") {
-    doc.deleteForward();
-  } else if (type === "deleteWordBackward") {
-    const { text } = doc;
-    let i = doc.caret;
-    while (i > 0 && /\s/.test(text[i - 1])) i -= 1;
-    while (i > 0 && !/\s/.test(text[i - 1])) i -= 1;
-    doc.moveTo(i, true);
-    doc.deleteSelection("backspace");
-  } else if (type === "deleteSoftLineBackward" || type === "deleteHardLineBackward") {
-    doc.deleteToRowStart();
-  } else {
-    return; // 나머지는 input·composition 쪽에서 처리
-  }
-  e.preventDefault();
-  ime.value = "";
-  render();
-});
-
-const ARROWS = {
-  "false,ArrowLeft": ["moveChar", -1], "false,ArrowRight": ["moveChar", 1],
-  "false,ArrowUp": ["moveRow", -1], "false,ArrowDown": ["moveRow", 1],
-  "true,ArrowUp": ["moveChar", -1], "true,ArrowDown": ["moveChar", 1],
-  "true,ArrowRight": ["moveRow", -1], "true,ArrowLeft": ["moveRow", 1],
-};
-
-ime.addEventListener("keydown", (e) => {
-  if (e.isComposing) return;
-  const doc = state.doc;
-  const command = e.metaKey || e.ctrlKey;
-  const arrow = ARROWS[`${state.vertical},${e.key}`];
-
-  if (command && e.key.toLowerCase() === "z") {
-    e.shiftKey ? doc.redo() : doc.undo();
-  } else if (command && e.key.toLowerCase() === "y") {
-    doc.redo();
-  } else if (command && e.key.toLowerCase() === "a") {
-    doc.selectAll();
-  } else if (command && e.key.toLowerCase() === "s") {
-    downloadText();
-  } else if (command && e.key === "Backspace") {
-    doc.deleteToRowStart();
-  } else if (arrow) {
-    doc[arrow[0]](arrow[1], e.shiftKey);
-  } else if (e.key === "Backspace") {
-    doc.backspace();
-  } else if (e.key === "Delete") {
-    doc.deleteForward();
-  } else {
-    return; // 글자 입력·복사·붙여넣기는 아래 이벤트에서 처리
-  }
-  e.preventDefault();
-  render();
-});
-
-ime.addEventListener("copy", (e) => {
-  const sel = state.doc.selectedText();
-  if (!sel) return;
-  e.clipboardData.setData("text/plain", sel);
-  e.preventDefault();
-});
-ime.addEventListener("cut", (e) => {
-  const sel = state.doc.selectedText();
-  if (!sel) return;
-  e.clipboardData.setData("text/plain", state.doc.cut());
-  e.preventDefault();
-  render();
-});
-ime.addEventListener("paste", (e) => {
-  const text = e.clipboardData.getData("text/plain").replace(/\r\n?/g, "\n");
-  e.preventDefault();
-  if (!text) return;
-  state.doc.insert(text, "paste");
-  render();
-});
-
 // --- 도구 모음 ---
 
-$("vertical").addEventListener("click", (e) => {
-  state.vertical = !state.vertical;
-  e.currentTarget.setAttribute("aria-pressed", String(state.vertical));
-  ime.focus({ preventScroll: true });
-  render();
-});
-$("fontCache").addEventListener("click", () => showFontCache(true));
-$("keyboard").addEventListener("click", () => {
-  ime.focus({ preventScroll: true });
-  note("");
-});
-$("selectMode").addEventListener("click", (e) => {
-  state.selectMode = !state.selectMode;
-  e.currentTarget.setAttribute("aria-pressed", String(state.selectMode));
-  svg.classList.toggle("selecting", state.selectMode);
-  note(state.selectMode ? "끌어서 글자를 선택하세요 (화면 밀기는 잠시 멈춥니다)" : "");
-});
-$("selectAll").addEventListener("click", () => {
-  state.doc.selectAll();
-  ime.focus({ preventScroll: true });
-  render();
-});
-$("copy").addEventListener("click", () => copySelection());
-$("paste").addEventListener("click", () => pasteClipboard());
-$("erase").addEventListener("click", () => {
-  state.doc.deleteToRowStart();
-  ime.focus({ preventScroll: true });
-  render();
-});
-$("font").addEventListener("change", (e) => useFont(e.target.value));
-$("size").addEventListener("input", (e) => {
-  state.ratio = Number(e.target.value) / 100;
-  $("sizeValue").textContent = `${e.target.value}%`;
-  render();
-});
+$("bannerClose").addEventListener("click", () => { $("banner").hidden = true; });
 $("name").addEventListener("input", (e) => {
   state.name = e.target.value;
   save();
@@ -642,6 +423,27 @@ $("file").addEventListener("change", (e) => {
 });
 $("save").addEventListener("click", downloadText);
 $("print").addEventListener("click", () => window.print());
+$("vertical").addEventListener("click", (e) => {
+  state.vertical = !state.vertical;
+  e.currentTarget.setAttribute("aria-pressed", String(state.vertical));
+  ime.focus({ preventScroll: true });
+  render();
+});
+$("form").addEventListener("change", (e) => {
+  state.form = e.target.value;
+  paper.setForm(state.form);
+  const f = paper.FORMS[state.form];
+  note(f.cut ? `${f.label} — A4에 인쇄해서 자르고 접습니다` : f.label);
+  ime.focus({ preventScroll: true });
+  render();
+});
+$("font").addEventListener("change", (e) => useFont(e.target.value));
+$("fontCache").addEventListener("click", () => showFontCache(true));
+$("size").addEventListener("input", (e) => {
+  state.ratio = Number(e.target.value) / 100;
+  $("sizeValue").textContent = `${e.target.value}%`;
+  render();
+});
 
 // 인쇄할 때는 세로 모드여도 용지를 원래 방향(A4 세로)으로 두고 글자만 눕힌다.
 // 브라우저는 PDF로 저장할 때 문서 제목을 파일 이름으로 쓰므로 잠시 바꿔 둔다.
@@ -657,6 +459,11 @@ addEventListener("afterprint", () => {
   render();
 });
 addEventListener("resize", () => render());
+if (window.visualViewport) {
+  // 확대하거나 키보드가 올라오면 종이 위치가 바뀐다. 입력칸도 같이 옮긴다.
+  visualViewport.addEventListener("resize", placeIme);
+  visualViewport.addEventListener("scroll", placeIme);
+}
 
 // --- 시작 ---
 
@@ -667,6 +474,13 @@ for (const f of FONTS) {
   option.textContent = `${f.label} (${(f.kb / 1024).toFixed(1)}MB)`;
   $("font").append(option);
 }
+for (const [name, f] of Object.entries(paper.FORMS)) {
+  const option = document.createElement("option");
+  option.value = name;
+  option.textContent = f.label;
+  $("form").append(option);
+}
+$("form").value = state.form;
 $("font").value = state.font;
 $("name").value = state.name;
 $("size").value = Math.round(state.ratio * 100);
@@ -675,6 +489,7 @@ $("vertical").setAttribute("aria-pressed", String(state.vertical));
 render();
 useFont(state.font);
 showFontCache();
+ime.focus({ preventScroll: true });
 // 글꼴이 늦게 준비되는 경우가 있어, 준비되면 크기를 다시 재서 그린다
 if (document.fonts && document.fonts.addEventListener) {
   document.fonts.addEventListener("loadingdone", () => {
@@ -682,7 +497,6 @@ if (document.fonts && document.fonts.addEventListener) {
     render();
   });
 }
-ime.focus({ preventScroll: true });
 
 if ("serviceWorker" in navigator) {
   // 새 버전이 자리를 잡으면 한 번만 새로고침해서 바로 반영한다.

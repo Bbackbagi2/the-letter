@@ -11,7 +11,11 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="icon" href="icon-192.png">
 <style>
-  :root { --bar: #f2f2f2; --line: #d6d6d6; --ink: #222; }
+  /* 입력칸에만 씌우는 글꼴. 모든 글자의 폭이 정확히 한 칸이어서, 브라우저가 글자를
+     원고지 칸과 같은 격자에 배치한다. 글리프는 비어 있어 아무것도 그리지 않는다. */
+  @font-face { font-family: "tl-grid"; src: url("fonts/tl-grid.woff2") format("woff2");
+    font-display: block; }
+  :root { --bar: #f2f2f2; --line: #d6d6d6; --ink: #222; --rule: #b01e23; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body {
@@ -27,6 +31,21 @@
   button, select { font: inherit; padding: 6px 10px; border: 1px solid var(--line);
     border-radius: 7px; background: #fff; color: inherit; }
   .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+  /* 글꼴 받는 진행률: 고른 글꼴 바로 아래에 얇게 */
+  .fontpick { position: relative; display: inline-flex; }
+  #progress { position: absolute; left: 4px; right: 4px; bottom: -5px; height: 3px;
+    border-radius: 2px; background: #00000014; overflow: hidden; }
+  #progressBar { display: block; height: 100%; width: 0; background: var(--rule);
+    transition: width 0.15s linear; }
+  #progress.unknown #progressBar { width: 40%; animation: slide 1.1s ease-in-out infinite; }
+  @keyframes slide { 0% { margin-left: -40% } 100% { margin-left: 100% } }
+  /* 놓치면 안 되는 문제는 도구 모음 바로 아래에 띠로 */
+  #banner { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px;
+    background: #fdecec; color: #7d1a1e; border-bottom: 1px solid #f0c9ca; font-size: 13px; }
+  #banner[hidden] { display: none; }
+  #bannerText { flex: 1; }
+  #bannerClose { border: 0; background: transparent; color: inherit; font-size: 18px;
+    line-height: 1; padding: 0 4px; }
   /* 저장된 글꼴 칸 3개를 점으로 보여 주는 아이콘 */
   #fontCache { display: flex; gap: 3px; align-items: center; padding: 8px; }
   #fontCache .slot { width: 8px; height: 8px; border-radius: 2px; border: 1px solid #aaa; }
@@ -46,17 +65,26 @@
   footer { padding: 6px 12px; padding-bottom: max(6px, env(safe-area-inset-bottom));
     background: var(--bar); border-top: 1px solid var(--line); min-height: 30px;
     font-size: 13px; color: #444; }
-  /* 한글 조합 입력을 받는 곳. 커서 칸 위에 두어 조합 후보 창이 그 옆에 뜨게 한다.
-     안드로이드 크롬은 화면 뒤에 숨은 입력칸에는 키보드를 띄우지 않는다. 그래서 화면 위에
-     두되 거의 투명하게 만들고, 손가락 입력은 원고지로 통과시킨다. */
-  #ime { position: fixed; opacity: 0.01; border: 0; padding: 0; margin: 0; resize: none;
-    overflow: hidden; background: transparent; color: transparent; caret-color: transparent;
-    z-index: 3; pointer-events: none; }
+  /* 글이 실제로 담기는 곳. 종이 위에 격자를 맞춰 덮어 두고 글자는 투명하게 둔다.
+     커서·선택·복사 풍선·키보드·받아쓰기를 기기가 원래 하던 방식대로 쓰기 위한 것이다.
+     위치·크기·회전은 app.js의 placeIme()가 종이와 같은 변환으로 맞춘다. */
+  #ime {
+    position: fixed; left: 0; top: 0; transform-origin: 0 0;
+    margin: 0; padding: 0; border: 0; outline: none; resize: none; overflow: hidden;
+    background: transparent; color: transparent; -webkit-text-fill-color: transparent;
+    caret-color: var(--ink); z-index: 2;
+    font-family: "tl-grid"; letter-spacing: 0; font-kerning: none;
+    font-variant-ligatures: none; tab-size: 1;
+    /* 칸을 차지하는 공백까지 원고지와 똑같이 줄바꿈시키는 조합 */
+    white-space: break-spaces; word-break: break-all; line-break: anywhere;
+    overflow-wrap: anywhere;
+  }
+  #ime::selection { background: rgba(80, 140, 255, 0.35); }
   #file { display: none; }
   @media print {
     @page { size: A4 portrait; margin: 0; }
     html, body { height: auto; background: #fff; overflow: visible; }
-    header, footer, #ime { display: none !important; }
+    header, footer, #banner, #ime { display: none !important; }
     main { display: block; padding: 0; }
     #paper { width: 210mm; height: 297mm; max-width: none; max-height: none; box-shadow: none; }
   }
@@ -70,20 +98,21 @@
   <button id="save">저장</button>
   <button id="print">인쇄 · PDF</button>
   <span class="sep"></span>
-  <button id="keyboard" title="키보드를 올립니다">키보드</button>
-  <button id="selectMode" aria-pressed="false" title="손가락으로 끌어서 글자를 선택합니다">선택</button>
-  <button id="selectAll" title="전체 선택 (⌘A)">전체</button>
-  <button id="copy" title="선택한 글자 복사 (⌘C)">복사</button>
-  <button id="paste" title="붙여넣기 (⌘V)">붙여넣기</button>
-  <button id="erase" title="선택한 글자, 없으면 그 줄 첫 칸까지 지우기 (⌘⌫)">지우기</button>
-  <span class="sep"></span>
+  <label>용지 <select id="form" title="인쇄 형식"></select></label>
   <button id="vertical" aria-pressed="false">세로쓰기</button>
-  <select id="font"></select>
+  <span class="fontpick">
+    <select id="font"></select>
+    <span id="progress" hidden><i id="progressBar"></i></span>
+  </span>
   <button id="fontCache" title="저장된 글꼴 (최대 3개)" aria-label="저장된 글꼴">
     <span class="slot"></span><span class="slot"></span><span class="slot"></span>
   </button>
   <label>글자 크기 <input id="size" type="range" min="40" max="100" step="1"><span id="sizeValue">80%</span></label>
 </header>
+<div id="banner" hidden role="alert">
+  <span id="bannerText"></span>
+  <button id="bannerClose" aria-label="닫기">×</button>
+</div>
 <main>
   <svg id="paper" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297"></svg>
 </main>
